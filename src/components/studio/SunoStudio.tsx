@@ -1,0 +1,1206 @@
+"use client";
+
+import * as React from "react";
+import {
+  AlertCircle,
+  AudioWaveform,
+  BookOpen,
+  CheckCircle2,
+  ChevronDown,
+  CircleOff,
+  Clock3,
+  History,
+  KeyRound,
+  ListMusic,
+  Loader2,
+  Mic2,
+  Music2,
+  RefreshCw,
+  Save,
+  Settings2,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  WandSparkles,
+  X
+} from "lucide-react";
+import {
+  avoidOptions,
+  defaultOpenRouterModel,
+  genreOptionGroups,
+  instrumentOptionGroups,
+  moodOptions,
+  openRouterModelOptions,
+  type OptionGroup,
+  priorityOptions,
+  songPresetOptions,
+  structureOptions,
+  structurePresets,
+  useCaseOptions,
+  vocalOptions
+} from "@/data/options";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ChipButton } from "@/components/ui/chip-button";
+import { CopyButton } from "@/components/ui/copy-button";
+import { Field, inputClassName } from "@/components/ui/field";
+import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
+import { SliderControl } from "@/components/ui/slider-control";
+import type { DirectionItem, DirectionProposal } from "@/lib/schemas/directionProposal";
+import type { FinalSunoOutput } from "@/lib/schemas/finalSunoOutput";
+import type { SongInput } from "@/lib/schemas/songInput";
+import {
+  addGenerationHistory,
+  deleteGenerationHistoryItem,
+  loadGenerationHistory,
+  type GenerationHistoryItem
+} from "@/lib/storage/history";
+import { SUNO_LIMITS } from "@/lib/suno/limits";
+import { cn } from "@/lib/utils";
+
+const defaultPresetInput = songPresetOptions[0].input;
+
+const defaultInput: SongInput = {
+  ...defaultPresetInput,
+  moods: [...defaultPresetInput.moods],
+  genres: [...defaultPresetInput.genres],
+  instruments: [...defaultPresetInput.instruments],
+  structure: [...defaultPresetInput.structure],
+  priorities: [...defaultPresetInput.priorities],
+  avoid: [...defaultPresetInput.avoid],
+  customMode: true,
+  styleWeight: 0.64,
+  weirdnessConstraint: 0.32,
+  audioWeight: 0.48,
+  advancedNotes: ""
+};
+
+const sampleProposal: DirectionProposal = {
+  summary: "夜のドライブ感を軸に、爽やかさと少しの切なさを両立する方向性です。",
+  recommendedDirections: [
+    {
+      id: "sample-nocturnal-drive",
+      name: "Nocturnal Drive",
+      description: "夜道に合う透明感のあるシンセポップ。柔らかい低音と女性ボーカルで、切なさを軽く残します。",
+      genreBlend: ["ドリームポップ", "シンセウェーブ", "女性ボーカル"],
+      bpmRange: "90-110 BPM",
+      keyMood: "切ない / 爽やか / 夜",
+      recommendedInstruments: ["シンセパッド", "エレクトリックピアノ", "ソフトベース"],
+      vocalDirection: "女性ボーカル",
+      structure: ["Intro", "Verse", "Chorus", "Bridge", "Outro"],
+      strengths: ["Sunoで扱いやすいジャンルの組み合わせ", "歌詞とムードの一貫性を作りやすい", "ドライブ用途に合うテンポ感"],
+      risks: ["シンセ要素を増やしすぎると既視感が出やすい", "切なさを強めすぎると爽やかさが弱くなる"]
+    },
+    {
+      id: "sample-city-lights",
+      name: "City Lights Memory",
+      description: "都会の夜と記憶をテーマにした、ノスタルジックで滑らかなサウンド。",
+      genreBlend: ["シティポップ", "シンセポップ", "女性ボーカル"],
+      bpmRange: "96-118 BPM",
+      keyMood: "都会的 / 懐かしい",
+      recommendedInstruments: ["エレクトリックピアノ", "クリーンギター", "ソフトベース"],
+      vocalDirection: "軽めの女性ボーカル",
+      structure: ["Verse", "Pre-Chorus", "Chorus", "Bridge", "Outro"],
+      strengths: ["歌メロを立てやすい", "J-pop寄りにも洋楽寄りにも調整しやすい"],
+      risks: ["City popに寄せすぎると古さが目立つ", "BPMが速すぎると夜の余韻が薄くなる"]
+    },
+    {
+      id: "sample-midnight-wave",
+      name: "Midnight Wave",
+      description: "リバーブ感のあるパッドとアルペジオで、広がりのある夜の空気を作る方向性。",
+      genreBlend: ["ドリームポップ", "シューゲイザー", "シンセウェーブ"],
+      bpmRange: "84-100 BPM",
+      keyMood: "幻想的 / 浮遊感",
+      recommendedInstruments: ["シンセパッド", "アルペジオシンセ", "リバーブギター"],
+      vocalDirection: "息多めのボーカル",
+      structure: ["Intro", "Verse", "Chorus", "Outro"],
+      strengths: ["雰囲気作りが強い", "短い言葉でも印象を残しやすい"],
+      risks: ["音像が曖昧になりやすい", "歌詞を詰めすぎると浮遊感が落ちる"]
+    }
+  ],
+  questions: []
+};
+
+const tabs = [
+  { id: "direction", label: "Direction" },
+  { id: "final", label: "Final" },
+  { id: "alternates", label: "Alternates" },
+  { id: "history", label: "History" }
+] as const;
+
+type TabId = (typeof tabs)[number]["id"];
+type ArrayField = "moods" | "genres" | "instruments" | "structure" | "priorities" | "avoid";
+type AppSettings = {
+  apiKey: string;
+  hasApiKey: boolean;
+  model: string;
+};
+type SettingsResponse = {
+  hasApiKey: boolean;
+  model: string;
+};
+type SettingsStatus = {
+  tone: "success" | "error";
+  message: string;
+} | null;
+
+async function postJson<T>(url: string, payload: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message = data?.message ?? "生成に失敗しました。";
+    const issues = Array.isArray(data?.issues) ? `\n${data.issues.join("\n")}` : "";
+    throw new Error(`${message}${issues}`);
+  }
+
+  return data as T;
+}
+
+function shortDate(value: string) {
+  return new Intl.DateTimeFormat("ja-JP", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function sameSequence(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
+}
+
+function modelLabel(value: string) {
+  const option = openRouterModelOptions.find((item) => item.value === value);
+  return option ? `${option.provider} / ${option.label}` : value;
+}
+
+function OutputBlock({
+  title,
+  value,
+  rows = 5
+}: {
+  title: string;
+  value: string;
+  rows?: number;
+}) {
+  return (
+    <div className="grid gap-2 rounded-lg border border-border bg-muted/35 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        <CopyButton value={value} />
+      </div>
+      <textarea
+        className={cn(inputClassName, "min-h-28 resize-y font-mono text-xs leading-5")}
+        readOnly
+        rows={rows}
+        value={value}
+      />
+    </div>
+  );
+}
+
+function CategorizedOptionSelector({
+  groups,
+  selected,
+  onToggle,
+  onClear
+}: {
+  groups: OptionGroup[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onClear: () => void;
+}) {
+  const [activeGroupId, setActiveGroupId] = React.useState(groups[0]?.id ?? "");
+  const activeGroup = React.useMemo(() => {
+    return groups.find((group) => group.id === activeGroupId) ?? groups[0];
+  }, [activeGroupId, groups]);
+
+  return (
+    <div className="grid gap-3">
+      <div className="grid gap-3 md:grid-cols-[170px_1fr]">
+        <div className="flex gap-2 overflow-x-auto pb-1 md:grid md:max-h-64 md:overflow-y-auto md:pb-0">
+          {groups.map((group) => (
+            <button
+              key={group.id}
+              type="button"
+              className={cn(
+                "min-h-9 shrink-0 rounded-md border px-3 text-left text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 md:w-full",
+                activeGroup?.id === group.id
+                  ? "border-primary bg-primary/15 text-primary"
+                  : "border-border bg-muted/40 text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              )}
+              onClick={() => setActiveGroupId(group.id)}
+            >
+              {group.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {activeGroup?.options.map((option) => (
+            <ChipButton key={option} active={selected.includes(option)} onClick={() => onToggle(option)}>
+              {option}
+            </ChipButton>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-2 border-t border-border/70 pt-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-muted-foreground">選択済み {selected.length}</span>
+          {selected.length ? (
+            <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+              解除
+            </Button>
+          ) : null}
+        </div>
+        {selected.length ? (
+          <div className="flex flex-wrap gap-2">
+            {selected.map((option) => (
+              <ChipButton key={option} active onClick={() => onToggle(option)}>
+                {option}
+              </ChipButton>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">未選択</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DirectionCard({
+  direction,
+  index,
+  active,
+  onSelect
+}: {
+  direction: DirectionItem;
+  index: number;
+  active: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <article
+      className={cn(
+        "rounded-lg border bg-panel-strong/70 p-4 transition",
+        active ? "border-primary shadow-[0_0_0_1px_rgba(190,255,67,0.28)]" : "border-border"
+      )}
+    >
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="flex min-w-0 gap-3">
+          <span
+            className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-full border text-sm font-bold",
+              active ? "border-primary bg-primary/15 text-primary" : "border-border text-muted-foreground"
+            )}
+          >
+            {index + 1}
+          </span>
+          <div className="min-w-0 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold text-foreground">{direction.name}</h3>
+              <Badge tone={active ? "primary" : "default"}>{direction.bpmRange}</Badge>
+            </div>
+            <p className="text-sm leading-6 text-muted-foreground">{direction.description}</p>
+            <div className="flex flex-wrap gap-2">
+              {direction.genreBlend.slice(0, 4).map((genre) => (
+                <Badge key={genre}>{genre}</Badge>
+              ))}
+              <Badge tone="accent">{direction.vocalDirection}</Badge>
+            </div>
+          </div>
+        </div>
+        <Button
+          type="button"
+          variant={active ? "primary" : "secondary"}
+          size="sm"
+          className="min-w-24 whitespace-nowrap"
+          onClick={onSelect}
+        >
+          {active ? <CheckCircle2 className="size-4" /> : <Sparkles className="size-4" />}
+          {active ? "選択中" : "選択"}
+        </Button>
+      </div>
+      <div className="mt-4 grid gap-3 border-t border-border/80 pt-3 md:grid-cols-2">
+        <div>
+          <p className="mb-2 text-xs font-semibold text-primary">Strengths</p>
+          <ul className="space-y-1 text-xs leading-5 text-muted-foreground">
+            {direction.strengths.slice(0, 3).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-semibold text-warning">Risks</p>
+          <ul className="space-y-1 text-xs leading-5 text-muted-foreground">
+            {direction.risks.slice(0, 3).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export function SunoStudio() {
+  const [input, setInput] = React.useState<SongInput>(defaultInput);
+  const [proposal, setProposal] = React.useState<DirectionProposal | null>(sampleProposal);
+  const [selectedDirectionId, setSelectedDirectionId] = React.useState<string | null>(
+    sampleProposal.recommendedDirections[0]?.id ?? null
+  );
+  const [answers, setAnswers] = React.useState<Record<string, string>>({});
+  const [finalOutput, setFinalOutput] = React.useState<FinalSunoOutput | null>(null);
+  const [history, setHistory] = React.useState<GenerationHistoryItem[]>([]);
+  const [activeTab, setActiveTab] = React.useState<TabId>("direction");
+  const [isProposing, setIsProposing] = React.useState(false);
+  const [isGenerating, setIsGenerating] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [settings, setSettings] = React.useState<AppSettings>({
+    apiKey: "",
+    hasApiKey: false,
+    model: defaultOpenRouterModel
+  });
+  const [settingsStatus, setSettingsStatus] = React.useState<SettingsStatus>(null);
+  const [isSavingSettings, setIsSavingSettings] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setHistory(loadGenerationHistory());
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    async function loadSettings() {
+      try {
+        const response = await fetch("/api/settings");
+        if (!response.ok) return;
+        const data = (await response.json()) as SettingsResponse;
+        if (cancelled) return;
+
+        setSettings({
+          apiKey: "",
+          hasApiKey: data.hasApiKey,
+          model: data.model || defaultOpenRouterModel
+        });
+      } catch {
+        if (!cancelled) {
+          setSettingsStatus({ tone: "error", message: "設定の読み込みに失敗しました。" });
+        }
+      }
+    }
+
+    loadSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedDirection = React.useMemo(() => {
+    return proposal?.recommendedDirections.find((direction) => direction.id === selectedDirectionId);
+  }, [proposal, selectedDirectionId]);
+  const selectedDirectionIndex = React.useMemo(() => {
+    return proposal?.recommendedDirections.findIndex((direction) => direction.id === selectedDirectionId) ?? -1;
+  }, [proposal, selectedDirectionId]);
+
+  const limits = finalOutput ? SUNO_LIMITS[finalOutput.recommendedModel] : null;
+  const promptLength = finalOutput ? `${finalOutput.style}\n${finalOutput.lyrics}`.length : 0;
+  const modelOptionsForSelect = React.useMemo(() => {
+    const hasCurrentModel = openRouterModelOptions.some((option) => option.value === settings.model);
+    return hasCurrentModel
+      ? openRouterModelOptions
+      : [{ provider: "Current", value: settings.model, label: settings.model }, ...openRouterModelOptions];
+  }, [settings.model]);
+
+  function updateInput<K extends keyof SongInput>(key: K, value: SongInput[K]) {
+    setInput((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleArrayValue(field: ArrayField, value: string) {
+    setInput((current) => {
+      const currentValues = current[field] ?? [];
+      const nextValues = currentValues.includes(value)
+        ? currentValues.filter((item) => item !== value)
+        : [...currentValues, value];
+
+      return {
+        ...current,
+        [field]: nextValues
+      };
+    });
+  }
+
+  function setBpm(key: "bpmMin" | "bpmMax", value: number) {
+    setInput((current) => {
+      const next = { ...current, [key]: value };
+      if (next.bpmMin > next.bpmMax) {
+        return key === "bpmMin" ? { ...next, bpmMax: value } : { ...next, bpmMin: value };
+      }
+      return next;
+    });
+  }
+
+  function selectVocalOption(option: string) {
+    setInput((current) => ({
+      ...current,
+      vocalType: option,
+      instrumental: option === "インスト",
+      vocalGender: option === "男性" ? "m" : option === "女性" ? "f" : undefined
+    }));
+  }
+
+  function applySongPreset(useCase: string) {
+    const preset = songPresetOptions.find((option) => option.label === useCase);
+
+    if (!preset) {
+      updateInput("useCase", useCase);
+      return;
+    }
+
+    setInput((current) => ({
+      ...current,
+      ...preset.input,
+      moods: [...preset.input.moods],
+      genres: [...preset.input.genres],
+      instruments: [...preset.input.instruments],
+      structure: [...preset.input.structure],
+      priorities: [...preset.input.priorities],
+      avoid: [...preset.input.avoid],
+      vocalGender: preset.input.vocalGender
+    }));
+    setFinalOutput(null);
+    setError(null);
+  }
+
+  async function saveSettings() {
+    setIsSavingSettings(true);
+    setSettingsStatus(null);
+
+    try {
+      const data = await postJson<SettingsResponse>("/api/settings", {
+        apiKey: settings.apiKey,
+        model: settings.model
+      });
+
+      setSettings({
+        apiKey: "",
+        hasApiKey: data.hasApiKey,
+        model: data.model || defaultOpenRouterModel
+      });
+      setSettingsStatus({ tone: "success", message: "設定を保存しました。" });
+    } catch (nextError) {
+      setSettingsStatus({
+        tone: "error",
+        message: nextError instanceof Error ? nextError.message : "設定の保存に失敗しました。"
+      });
+    } finally {
+      setIsSavingSettings(false);
+    }
+  }
+
+  async function proposeDirection() {
+    setIsProposing(true);
+    setError(null);
+
+    try {
+      const data = await postJson<DirectionProposal>("/api/propose-direction", input);
+      setProposal(data);
+      setSelectedDirectionId(data.recommendedDirections[0]?.id ?? null);
+      setActiveTab("direction");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "方向性の提案に失敗しました。");
+    } finally {
+      setIsProposing(false);
+    }
+  }
+
+  async function generateFinal() {
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const data = await postJson<FinalSunoOutput>("/api/generate-final", {
+        input,
+        selectedDirection,
+        answers
+      });
+      setFinalOutput(data);
+      setActiveTab("final");
+
+      const item: GenerationHistoryItem = {
+        id: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        input,
+        selectedDirectionName: selectedDirection?.name,
+        output: data
+      };
+      setHistory(addGenerationHistory(item));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "最終生成に失敗しました。");
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  function loadFromHistory(item: GenerationHistoryItem) {
+    setInput(item.input);
+    setFinalOutput(item.output);
+    setActiveTab("final");
+    setError(null);
+  }
+
+  function deleteHistory(id: string) {
+    setHistory(deleteGenerationHistoryItem(id));
+  }
+
+  return (
+    <main className="min-h-screen px-3 py-4 sm:px-5 lg:px-6">
+      <div className="mx-auto flex max-w-[1540px] flex-col gap-4">
+        <header className="flex flex-col gap-3 border-b border-border/80 pb-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <div className="flex size-11 items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-primary">
+              <AudioWaveform className="size-7" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-normal text-foreground sm:text-2xl">
+                Suno Prompt Director
+              </h1>
+              <p className="text-sm font-semibold text-primary">Studio Console</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone="primary" className="h-9 gap-2 px-3">
+              <span className="size-2 rounded-full bg-primary" />
+              {modelLabel(settings.model)}
+            </Badge>
+            <Button type="button" variant="secondary" onClick={() => setSettingsOpen((current) => !current)}>
+              <Settings2 className="size-4" />
+              設定
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => setActiveTab("history")}>
+              <History className="size-4" />
+              履歴
+            </Button>
+            <Button type="button" variant="ghost" onClick={() => setInput(defaultInput)}>
+              <RefreshCw className="size-4" />
+              初期化
+            </Button>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="flex items-start gap-3 rounded-lg border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+            <AlertCircle className="mt-0.5 size-4 shrink-0" />
+            <p className="whitespace-pre-wrap leading-6">{error}</p>
+          </div>
+        ) : null}
+
+        {settingsOpen ? (
+          <Panel>
+            <PanelHeader>
+              <div className="flex items-center gap-2">
+                <Settings2 className="size-4 text-primary" />
+                <h2 className="text-sm font-bold">API設定</h2>
+              </div>
+              <Badge tone={settings.hasApiKey ? "primary" : "default"}>env.local</Badge>
+            </PanelHeader>
+            <PanelBody className="grid gap-4 lg:grid-cols-[1fr_1fr_auto] lg:items-end">
+              <Field label="APIキー" icon={<KeyRound className="size-4 text-muted-foreground" />} className="border-b-0 py-0">
+                <input
+                  className={inputClassName}
+                  type="password"
+                  autoComplete="off"
+                  value={settings.apiKey}
+                  onChange={(event) => {
+                    setSettings((current) => ({ ...current, apiKey: event.target.value }));
+                    setSettingsStatus(null);
+                  }}
+                  placeholder={settings.hasApiKey ? "保存済み" : "sk-or-v1-..."}
+                />
+              </Field>
+              <Field label="モデル" icon={<WandSparkles className="size-4 text-muted-foreground" />} className="border-b-0 py-0">
+                <select
+                  className={inputClassName}
+                  value={settings.model}
+                  onChange={(event) => {
+                    setSettings((current) => ({ ...current, model: event.target.value }));
+                    setSettingsStatus(null);
+                  }}
+                >
+                  {modelOptionsForSelect.map((option) => (
+                    <option key={`${option.provider}-${option.value}`} value={option.value}>
+                      {option.provider} / {option.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <div className="grid gap-2">
+                <Button type="button" variant="primary" onClick={saveSettings} disabled={isSavingSettings}>
+                  {isSavingSettings ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  保存
+                </Button>
+                {settingsStatus ? (
+                  <p
+                    className={cn(
+                      "text-xs font-semibold",
+                      settingsStatus.tone === "success" ? "text-primary" : "text-danger"
+                    )}
+                  >
+                    {settingsStatus.message}
+                  </p>
+                ) : null}
+              </div>
+            </PanelBody>
+          </Panel>
+        ) : null}
+
+        <section className="grid gap-4 xl:grid-cols-[132px_1fr_1.18fr]">
+          <aside className="hidden rounded-lg border border-border bg-panel p-2 shadow-console xl:flex xl:flex-col xl:justify-between">
+            <nav className="grid gap-2">
+              <Button type="button" variant="primary" className="justify-start">
+                <SlidersHorizontal className="size-4" />
+                ミキサー
+              </Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("history")}>
+                <History className="size-4" />
+                履歴
+              </Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("final")}>
+                <WandSparkles className="size-4" />
+                Final
+              </Button>
+            </nav>
+            <div className="grid gap-2 rounded-md border border-border bg-muted/35 p-3">
+              <p className="text-xs text-muted-foreground">今月の生成数</p>
+              <p className="text-2xl font-bold text-primary">{history.length}</p>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div className="h-full w-1/4 rounded-full bg-primary" />
+              </div>
+            </div>
+          </aside>
+
+          <div className="grid gap-4">
+            <Panel>
+              <PanelHeader>
+                <div className="flex items-center gap-2">
+                  <WandSparkles className="size-4 text-primary" />
+                  <h2 className="text-sm font-bold">インテント・コンポーザー</h2>
+                </div>
+                <Badge>任意</Badge>
+              </PanelHeader>
+              <PanelBody className="grid gap-4 md:grid-cols-[1fr_260px]">
+                <textarea
+                  className={cn(inputClassName, "min-h-24 resize-y text-base leading-7")}
+                  value={input.freeText}
+                  onChange={(event) => updateInput("freeText", event.target.value)}
+                  placeholder="例: 夜のドライブで聴きたい、少し切なくて爽やかなシンセポップ"
+                />
+                <div className="grid gap-2">
+                  <label className="text-xs font-semibold text-muted-foreground">プリセット</label>
+                  <select
+                    className={inputClassName}
+                    value={input.useCase}
+                    onChange={(event) => applySongPreset(event.target.value)}
+                  >
+                    {useCaseOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                  <Button type="button" variant="primary" onClick={proposeDirection} disabled={isProposing}>
+                    {isProposing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                    方向性を提案
+                  </Button>
+                </div>
+              </PanelBody>
+            </Panel>
+
+            <Panel>
+              <PanelHeader>
+                <div className="flex items-center gap-2">
+                  <SlidersHorizontal className="size-4 text-primary" />
+                  <h2 className="text-sm font-bold">Direction Board</h2>
+                </div>
+                <Badge tone="accent">{input.genres.length + input.moods.length} picks</Badge>
+              </PanelHeader>
+              <PanelBody className="py-1">
+                <Field label="ユースケース" icon={<ListMusic className="size-4 text-muted-foreground" />}>
+                  <div className="flex flex-wrap gap-2">
+                    {useCaseOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.useCase === option}
+                        onClick={() => applySongPreset(option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="ムード / 雰囲気" icon={<Sparkles className="size-4 text-muted-foreground" />}>
+                  <div className="flex flex-wrap gap-2">
+                    {moodOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.moods.includes(option)}
+                        onClick={() => toggleArrayValue("moods", option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="ジャンル / スタイル" icon={<Music2 className="size-4 text-muted-foreground" />}>
+                  <CategorizedOptionSelector
+                    groups={genreOptionGroups}
+                    selected={input.genres}
+                    onToggle={(option) => toggleArrayValue("genres", option)}
+                    onClear={() => updateInput("genres", [])}
+                  />
+                </Field>
+
+                <Field label="BPM" hint={`${input.bpmMin} - ${input.bpmMax}`}>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <SliderControl
+                      label="Min"
+                      min={40}
+                      max={220}
+                      step={1}
+                      value={input.bpmMin}
+                      format={(value) => `${value}`}
+                      onChange={(value) => setBpm("bpmMin", value)}
+                    />
+                    <SliderControl
+                      label="Max"
+                      min={40}
+                      max={220}
+                      step={1}
+                      value={input.bpmMax}
+                      format={(value) => `${value}`}
+                      onChange={(value) => setBpm("bpmMax", value)}
+                    />
+                  </div>
+                </Field>
+
+                <Field label="ボーカル" icon={<Mic2 className="size-4 text-muted-foreground" />}>
+                  <div className="flex flex-wrap gap-2">
+                    {vocalOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.vocalType === option}
+                        onClick={() => selectVocalOption(option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="使用楽器 / サウンド">
+                  <CategorizedOptionSelector
+                    groups={instrumentOptionGroups}
+                    selected={input.instruments}
+                    onToggle={(option) => toggleArrayValue("instruments", option)}
+                    onClear={() => updateInput("instruments", [])}
+                  />
+                </Field>
+
+                <Field label="楽曲構成">
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {structurePresets.map((preset) => (
+                      <ChipButton
+                        key={preset.id}
+                        active={sameSequence(input.structure, preset.sections)}
+                        onClick={() => updateInput("structure", [...preset.sections])}
+                      >
+                        {preset.label}
+                      </ChipButton>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 border-t border-border/70 pt-3">
+                    {structureOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.structure.includes(option)}
+                        onClick={() => toggleArrayValue("structure", option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="優先したいこと">
+                  <div className="flex flex-wrap gap-2">
+                    {priorityOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.priorities.includes(option)}
+                        onClick={() => toggleArrayValue("priorities", option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="避けたい要素">
+                  <div className="flex flex-wrap gap-2">
+                    {avoidOptions.map((option) => (
+                      <ChipButton
+                        key={option}
+                        active={input.avoid.includes(option)}
+                        onClick={() => toggleArrayValue("avoid", option)}
+                      >
+                        {option}
+                      </ChipButton>
+                    ))}
+                  </div>
+                </Field>
+
+                <Field label="歌詞の設定" icon={<BookOpen className="size-4 text-muted-foreground" />}>
+                  <div className="grid gap-3 md:grid-cols-[150px_1fr_130px]">
+                    <select
+                      className={inputClassName}
+                      value={input.lyricLanguage}
+                      onChange={(event) => updateInput("lyricLanguage", event.target.value)}
+                    >
+                      <option value="日本語">日本語</option>
+                      <option value="English">English</option>
+                      <option value="Korean">Korean</option>
+                      <option value="Spanish">Spanish</option>
+                    </select>
+                    <textarea
+                      className={cn(inputClassName, "min-h-24 resize-y leading-6")}
+                      value={input.lyricTheme}
+                      onChange={(event) => updateInput("lyricTheme", event.target.value)}
+                      placeholder="テーマ"
+                    />
+                    <select
+                      className={inputClassName}
+                      value={input.lyricLength}
+                      onChange={(event) => updateInput("lyricLength", event.target.value)}
+                    >
+                      <option value="短め">短め</option>
+                      <option value="標準">標準</option>
+                      <option value="長め">長め</option>
+                    </select>
+                  </div>
+                </Field>
+
+                <Field label="Advanced">
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <SliderControl
+                      label="Style Weight"
+                      value={input.styleWeight}
+                      onChange={(value) => updateInput("styleWeight", Number(value.toFixed(2)))}
+                    />
+                    <SliderControl
+                      label="Weirdness"
+                      value={input.weirdnessConstraint}
+                      onChange={(value) => updateInput("weirdnessConstraint", Number(value.toFixed(2)))}
+                    />
+                    <SliderControl
+                      label="Audio Weight"
+                      value={input.audioWeight}
+                      onChange={(value) => updateInput("audioWeight", Number(value.toFixed(2)))}
+                    />
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <ChipButton
+                      active={input.customMode}
+                      onClick={() => updateInput("customMode", !input.customMode)}
+                    >
+                      Custom Mode
+                    </ChipButton>
+                    <ChipButton
+                      active={input.instrumental}
+                      onClick={() => {
+                        updateInput("instrumental", !input.instrumental);
+                        updateInput("vocalType", input.instrumental ? "女性" : "インスト");
+                      }}
+                    >
+                      Instrumental
+                    </ChipButton>
+                  </div>
+                </Field>
+              </PanelBody>
+            </Panel>
+          </div>
+
+          <Panel className="overflow-hidden">
+            <div className="flex overflow-x-auto border-b border-border bg-panel-strong/75">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={cn(
+                    "min-h-12 min-w-32 border-r border-border px-4 text-sm font-semibold transition",
+                    activeTab === tab.id
+                      ? "bg-muted text-primary"
+                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                  )}
+                  onClick={() => setActiveTab(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === "direction" ? (
+              <PanelBody className="grid gap-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <h2 className="text-base font-bold">提案された方向性</h2>
+                    {proposal ? (
+                      <p className="mt-1 text-sm leading-6 text-muted-foreground">{proposal.summary}</p>
+                    ) : (
+                      <p className="mt-1 text-sm text-muted-foreground">まだ提案はありません。</p>
+                    )}
+                  </div>
+                  <Button type="button" onClick={proposeDirection} disabled={isProposing}>
+                    {isProposing ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    再提案
+                  </Button>
+                </div>
+
+                {proposal ? (
+                  <div className="grid gap-3">
+                    {proposal.recommendedDirections.map((direction, index) => (
+                      <DirectionCard
+                        key={direction.id}
+                        direction={direction}
+                        index={index}
+                        active={selectedDirectionId === direction.id}
+                        onSelect={() => setSelectedDirectionId(direction.id)}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-8 text-center">
+                    <div className="max-w-sm">
+                      <CircleOff className="mx-auto mb-3 size-8 text-muted-foreground" />
+                      <p className="text-sm leading-6 text-muted-foreground">
+                        左の条件から方向性を作成すると、候補とリスクがここに並びます。
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {proposal?.questions.length ? (
+                  <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4">
+                    <h3 className="text-sm font-bold">追加で決めること</h3>
+                    {proposal.questions.map((question) => (
+                      <div key={question.id} className="grid gap-2 border-t border-border/80 pt-3 first:border-t-0 first:pt-0">
+                        <p className="text-sm font-semibold">{question.question}</p>
+                        <p className="text-xs leading-5 text-muted-foreground">{question.reason}</p>
+                        <div className="flex flex-wrap gap-2">
+                          {question.options.map((option) => (
+                            <ChipButton
+                              key={option.id}
+                              active={answers[question.id] === option.label}
+                              onClick={() => setAnswers((current) => ({ ...current, [question.id]: option.label }))}
+                              title={option.description}
+                            >
+                              {option.label}
+                            </ChipButton>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </PanelBody>
+            ) : null}
+
+            {activeTab === "final" ? (
+              <PanelBody className="grid gap-4">
+                {finalOutput ? (
+                  <>
+                    <div className="grid gap-3 rounded-lg border border-primary/35 bg-primary/10 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <p className="text-xs font-semibold text-primary">Selected Title</p>
+                        <h2 className="mt-1 text-2xl font-bold">{finalOutput.selectedTitle}</h2>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <Badge tone="primary">{finalOutput.recommendedModel}</Badge>
+                          <Badge>{finalOutput.customMode ? "Custom Mode" : "Simple Mode"}</Badge>
+                          <Badge>{finalOutput.instrumental ? "Instrumental" : "Lyrics"}</Badge>
+                          {limits ? (
+                            <Badge tone={promptLength > limits.promptMax ? "danger" : "accent"}>
+                              {promptLength} / {limits.promptMax}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </div>
+                      <CopyButton value={finalOutput.sunoCopyBlocks.title} label="タイトルをコピー" />
+                    </div>
+
+                    <div className="grid gap-3">
+                      <OutputBlock title="Style" value={finalOutput.sunoCopyBlocks.style} rows={4} />
+                      <OutputBlock title="Lyrics" value={finalOutput.sunoCopyBlocks.lyrics} rows={10} />
+                      <OutputBlock title="Negative Tags" value={finalOutput.sunoCopyBlocks.negativeTags} rows={3} />
+                      <OutputBlock title="Advanced" value={finalOutput.sunoCopyBlocks.advanced} rows={4} />
+                    </div>
+
+                    <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4">
+                      <h3 className="text-sm font-bold">Rationale</h3>
+                      <div className="grid gap-2 text-sm leading-6 text-muted-foreground md:grid-cols-2">
+                        <p>{finalOutput.rationale.bpmReason}</p>
+                        <p>{finalOutput.rationale.genreReason}</p>
+                        <p>{finalOutput.rationale.instrumentReason}</p>
+                        <p>{finalOutput.rationale.structureReason}</p>
+                      </div>
+                    </div>
+
+                    <details className="rounded-lg border border-border bg-panel-strong">
+                      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-semibold">
+                        Raw JSON
+                        <ChevronDown className="size-4" />
+                      </summary>
+                      <pre className="max-h-96 overflow-auto border-t border-border p-4 text-xs leading-5 text-muted-foreground">
+                        {JSON.stringify(finalOutput, null, 2)}
+                      </pre>
+                    </details>
+                  </>
+                ) : (
+                  <div className="grid min-h-[560px] place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-8 text-center">
+                    <div className="max-w-sm">
+                      <WandSparkles className="mx-auto mb-3 size-9 text-primary" />
+                      <h2 className="text-lg font-bold">Final プロンプトを生成</h2>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        選択中の方向性と入力内容から、コピー用ブロックを作成します。
+                      </p>
+                      <Button className="mt-5" type="button" variant="primary" onClick={generateFinal} disabled={isGenerating}>
+                        {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                        Final プロンプトを生成
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </PanelBody>
+            ) : null}
+
+            {activeTab === "alternates" ? (
+              <PanelBody className="grid gap-3">
+                {finalOutput?.alternateDirections.length ? (
+                  finalOutput.alternateDirections.map((direction) => (
+                    <article key={direction.name} className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-bold">{direction.name}</h3>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{direction.description}</p>
+                        </div>
+                        <CopyButton value={`${direction.style}\n\nNegative: ${direction.negativeTags}`} />
+                      </div>
+                      <p className="font-mono text-xs leading-5 text-muted-foreground">{direction.style}</p>
+                    </article>
+                  ))
+                ) : (
+                  <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-8 text-center text-sm text-muted-foreground">
+                    Final生成後に別案が表示されます。
+                  </div>
+                )}
+              </PanelBody>
+            ) : null}
+
+            {activeTab === "history" ? (
+              <PanelBody className="grid gap-3">
+                {history.length ? (
+                  history.map((item) => (
+                    <article
+                      key={item.id}
+                      className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 md:grid-cols-[1fr_auto] md:items-center"
+                    >
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h3 className="font-bold">{item.output.selectedTitle}</h3>
+                          <Badge>{shortDate(item.createdAt)}</Badge>
+                          {item.selectedDirectionName ? <Badge tone="primary">{item.selectedDirectionName}</Badge> : null}
+                        </div>
+                        <p className="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">
+                          {item.output.style}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button type="button" size="sm" onClick={() => loadFromHistory(item)}>
+                          読み込む
+                        </Button>
+                        <Button type="button" size="icon" variant="danger" onClick={() => deleteHistory(item.id)} aria-label="履歴を削除">
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </div>
+                    </article>
+                  ))
+                ) : (
+                  <div className="grid min-h-72 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-8 text-center text-sm text-muted-foreground">
+                    保存済みの生成履歴はありません。
+                  </div>
+                )}
+              </PanelBody>
+            ) : null}
+          </Panel>
+        </section>
+
+        <footer className="rounded-lg border border-border bg-panel/95 p-3 shadow-console backdrop-blur lg:sticky lg:bottom-3 lg:z-10">
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto] lg:items-center">
+            <div className="grid gap-2 sm:grid-cols-[auto_1fr] sm:items-center">
+              <div className="flex items-center gap-2">
+                <span className="flex size-8 items-center justify-center rounded-full border border-primary bg-primary/15 text-sm font-bold text-primary">
+                  {selectedDirection ? selectedDirectionIndex + 1 : "-"}
+                </span>
+                <div>
+                  <p className="text-xs text-muted-foreground">選択中の方向性</p>
+                  <p className="font-semibold">{selectedDirection?.name ?? "未選択"}</p>
+                </div>
+              </div>
+              <div className="hidden h-9 border-l border-border sm:block" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+              <Clock3 className="size-4 text-primary" />
+              <span>{isGenerating ? "生成中" : finalOutput ? "保存済み" : "準備完了"}</span>
+              <Badge tone={selectedDirection ? "primary" : "default"}>
+                {selectedDirection ? "Direction selected" : "Input only"}
+              </Badge>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  setSelectedDirectionId(null);
+                  setFinalOutput(null);
+                }}
+              >
+                <X className="size-4" />
+                クリア
+              </Button>
+              <Button type="button" variant="secondary" size="lg" onClick={proposeDirection} disabled={isProposing}>
+                {isProposing ? <Loader2 className="size-5 animate-spin" /> : <Sparkles className="size-5" />}
+                方向性を提案
+              </Button>
+              <Button type="button" variant="primary" size="lg" onClick={generateFinal} disabled={isGenerating}>
+                {isGenerating ? <Loader2 className="size-5 animate-spin" /> : <WandSparkles className="size-5" />}
+                Final プロンプトを生成
+              </Button>
+            </div>
+          </div>
+        </footer>
+      </div>
+    </main>
+  );
+}

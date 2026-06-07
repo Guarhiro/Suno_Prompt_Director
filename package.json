@@ -1,0 +1,42 @@
+{
+  "name": "suno-prompt-director",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Suno向けの楽曲ディレクション、スタイルプロンプト、歌詞、コピー用ブロックを生成するNext.jsアプリです。",
+  "author": "Guarhiro",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Guarhiro/Suno_Prompt_Director.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Guarhiro/Suno_Prompt_Director/issues"
+  },
+  "homepage": "https://github.com/Guarhiro/Suno_Prompt_Director#readme",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.468.0",
+    "next": "^15.3.4",
+    "openai": "^4.104.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^2.6.0",
+    "zod": "^3.25.64"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.6",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.8.3"
+  }
+}
