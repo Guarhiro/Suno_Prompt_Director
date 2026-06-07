@@ -39,11 +39,43 @@ cp .env.example .env.local
 OPENROUTER_API_KEY=your_openrouter_api_key
 OPENROUTER_MODEL=~openai/gpt-mini-latest
 OPENROUTER_SITE_URL=http://localhost:3000
+# Optional: ffmpegがPATH外にある場合
+FFMPEG_PATH=/path/to/ffmpeg
 ```
 
 アプリ内の設定パネルからAPIキーとモデルを保存することもできます。`.env.local` はGit管理対象外です。
 
-### 3. Run the development server
+### 3. Set up local audio analysis
+
+Reviseタブの音源解析は、Python + librosa を使うとBPM/キー/構成推定の精度が上がります。
+
+```bash
+npm run audio:setup
+```
+
+`ffmpeg` がPATHにない場合は、`.env.local` に `FFMPEG_PATH` を設定してください。
+Creative File Studio の `vendor/backgroundremover-venv/bin/ffmpeg` がある場合は自動検出します。
+
+Reviseタブの `高精度解析` は、利用できる場合に all-in-one と Demucs を追加で使います。
+all-in-one は構成推定を補強し、Demucs は `drums / bass / vocals / other` などのstem比率で楽器推定を補強します。
+解析用のstemやスペクトログラム等の中間ファイルは処理後に削除します。PyTorch/Demucs/all-in-oneのモデルキャッシュは再ダウンロードを避けるため削除しません。
+
+Audio Stem Studio の Demucs 環境がある場合は、次のPythonを自動検出します。
+
+```text
+/Users/guarhiro/Documents/music separater/.venv/bin/python
+```
+
+all-in-oneを別環境に入れている場合は、必要に応じて `.env.local` に設定できます。
+
+```env
+ALLIN1_PYTHON=/path/to/python-with-allin1
+DEMUCS_PYTHON=/path/to/python-with-demucs
+AUDIO_ADVANCED_ALLIN1_MODEL=harmonix-fold0
+AUDIO_ADVANCED_DEMUCS_MODEL=htdemucs
+```
+
+### 4. Run the development server
 
 ```bash
 npm run dev

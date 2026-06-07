@@ -10,6 +10,7 @@ import {
   CircleOff,
   Clock3,
   FileText,
+  FileAudio,
   History,
   KeyRound,
   ListMusic,
@@ -22,6 +23,7 @@ import {
   SlidersHorizontal,
   Sparkles,
   Trash2,
+  Upload,
   WandSparkles,
   X
 } from "lucide-react";
@@ -47,7 +49,14 @@ import { CopyButton } from "@/components/ui/copy-button";
 import { Field, inputClassName } from "@/components/ui/field";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { SliderControl } from "@/components/ui/slider-control";
+import {
+  analyzeAudioFile,
+  analyzeAudioFileAdvancedOnServer,
+  analyzeAudioFileOnServer,
+  type AudioAnalysisResult
+} from "@/lib/audio/analyzeAudio";
 import type { DirectionItem, DirectionProposal } from "@/lib/schemas/directionProposal";
+import type { AudioStyleProposalOutput, AudioStyleProposal } from "@/lib/schemas/audioStyleProposal";
 import type { FinalSunoOutput } from "@/lib/schemas/finalSunoOutput";
 import type { RevisedSunoOutput } from "@/lib/schemas/reviseSunoOutput";
 import type { SongInput } from "@/lib/schemas/songInput";
@@ -216,6 +225,23 @@ function sameSequence(left: readonly string[], right: readonly string[]) {
 function modelLabel(value: string) {
   const option = openRouterModelOptions.find((item) => item.value === value);
   return option ? `${option.provider} / ${option.label}` : value;
+}
+
+function formatSeconds(value: number) {
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.round(value % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${minutes}:${seconds}`;
+}
+
+function confidencePercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function analysisEngineLabel(engine: AudioAnalysisResult["engine"]) {
+  if (engine === "advanced-local") return "High Precision";
+  return engine === "python-librosa" ? "Python / librosa" : "Browser basic";
 }
 
 function OutputBlock({
@@ -399,6 +425,17 @@ export function SunoStudio() {
   const [finalOutput, setFinalOutput] = React.useState<FinalSunoOutput | null>(null);
   const [revisionForm, setRevisionForm] = React.useState<RevisionForm>(defaultRevisionForm);
   const [revisionOutput, setRevisionOutput] = React.useState<RevisedSunoOutput | null>(null);
+  const [audioFile, setAudioFile] = React.useState<File | null>(null);
+  const [audioAnalysis, setAudioAnalysis] = React.useState<AudioAnalysisResult | null>(null);
+  const [isAnalyzingAudio, setIsAnalyzingAudio] = React.useState(false);
+  const [isAnalyzingAudioAdvanced, setIsAnalyzingAudioAdvanced] = React.useState(false);
+  const [audioAnalysisError, setAudioAnalysisError] = React.useState<string | null>(null);
+  const [audioAnalysisNotice, setAudioAnalysisNotice] = React.useState<string | null>(null);
+  const [audioStyleApplied, setAudioStyleApplied] = React.useState(false);
+  const [audioStyleProposals, setAudioStyleProposals] = React.useState<AudioStyleProposalOutput | null>(null);
+  const [isGeneratingAudioStyles, setIsGeneratingAudioStyles] = React.useState(false);
+  const [audioStyleProposalError, setAudioStyleProposalError] = React.useState<string | null>(null);
+  const [appliedAudioStyleId, setAppliedAudioStyleId] = React.useState<string | null>(null);
   const [history, setHistory] = React.useState<GenerationHistoryItem[]>([]);
   const [activeTab, setActiveTab] = React.useState<TabId>("direction");
   const [isProposing, setIsProposing] = React.useState(false);
@@ -645,6 +682,157 @@ export function SunoStudio() {
     } finally {
       setIsRevising(false);
     }
+  }
+
+  function selectAudioFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    setAudioFile(file);
+    setAudioAnalysis(null);
+    setAudioAnalysisError(null);
+    setAudioAnalysisNotice(null);
+    setAudioStyleApplied(false);
+    setAudioStyleProposals(null);
+    setAudioStyleProposalError(null);
+    setAppliedAudioStyleId(null);
+  }
+
+  async function analyzeSelectedAudio() {
+    if (!audioFile) {
+      setAudioAnalysisError("音声ファイルを選択してください。");
+      return;
+    }
+
+    setIsAnalyzingAudio(true);
+    setAudioAnalysisError(null);
+    setAudioAnalysisNotice(null);
+    setAudioStyleApplied(false);
+    setAudioStyleProposals(null);
+    setAudioStyleProposalError(null);
+    setAppliedAudioStyleId(null);
+
+    try {
+      const result = await analyzeAudioFileOnServer(audioFile);
+      setAudioAnalysis(result);
+    } catch (serverError) {
+      try {
+        const fallback = await analyzeAudioFile(audioFile);
+        const serverMessage =
+          serverError instanceof Error ? serverError.message : "Python音声解析に失敗しました。";
+        setAudioAnalysis({
+          ...fallback,
+          warnings: [`Python解析に失敗したため、ブラウザ簡易解析結果を表示しています。${serverMessage}`, ...fallback.warnings]
+        });
+        setAudioAnalysisNotice("Python解析に失敗したため、ブラウザ簡易解析結果を表示しています。");
+      } catch (fallbackError) {
+        const message =
+          fallbackError instanceof Error
+            ? fallbackError.message
+            : "音声解析に失敗しました。別の音声形式で試してください。";
+        setAudioAnalysisError(message);
+      }
+    } finally {
+      setIsAnalyzingAudio(false);
+    }
+  }
+
+  async function analyzeSelectedAudioAdvanced() {
+    if (!audioFile) {
+      setAudioAnalysisError("音声ファイルを選択してください。");
+      return;
+    }
+
+    setIsAnalyzingAudioAdvanced(true);
+    setAudioAnalysisError(null);
+    setAudioAnalysisNotice(null);
+    setAudioStyleApplied(false);
+    setAudioStyleProposals(null);
+    setAudioStyleProposalError(null);
+    setAppliedAudioStyleId(null);
+
+    try {
+      const result = await analyzeAudioFileAdvancedOnServer(audioFile);
+      setAudioAnalysis(result);
+      setAudioAnalysisNotice("高精度解析結果を表示しています。all-in-one / Demucsが未導入の場合は通常解析を併用します。");
+    } catch (advancedError) {
+      try {
+        const result = await analyzeAudioFileOnServer(audioFile);
+        const advancedMessage =
+          advancedError instanceof Error ? advancedError.message : "高精度音声解析に失敗しました。";
+        setAudioAnalysis({
+          ...result,
+          warnings: [`高精度解析に失敗したため、通常Python解析結果を表示しています。${advancedMessage}`, ...result.warnings]
+        });
+        setAudioAnalysisNotice("高精度解析に失敗したため、通常Python解析結果を表示しています。");
+      } catch (serverError) {
+        try {
+          const fallback = await analyzeAudioFile(audioFile);
+          const advancedMessage =
+            advancedError instanceof Error ? advancedError.message : "高精度音声解析に失敗しました。";
+          const serverMessage =
+            serverError instanceof Error ? serverError.message : "Python音声解析に失敗しました。";
+          setAudioAnalysis({
+            ...fallback,
+            warnings: [
+              `高精度解析とPython解析に失敗したため、ブラウザ簡易解析結果を表示しています。${advancedMessage} / ${serverMessage}`,
+              ...fallback.warnings
+            ]
+          });
+          setAudioAnalysisNotice("高精度解析とPython解析に失敗したため、ブラウザ簡易解析結果を表示しています。");
+        } catch (fallbackError) {
+          const message =
+            fallbackError instanceof Error
+              ? fallbackError.message
+              : "高精度音声解析に失敗しました。別の音声形式で試してください。";
+          setAudioAnalysisError(message);
+        }
+      }
+    } finally {
+      setIsAnalyzingAudioAdvanced(false);
+    }
+  }
+
+  function applyAudioStyleToRevision() {
+    if (!audioAnalysis) return;
+    setRevisionForm((current) => ({
+      ...current,
+      sourceStyle: audioAnalysis.sunoStyle
+    }));
+    setAudioStyleApplied(true);
+    setAppliedAudioStyleId("local-analysis");
+  }
+
+  async function generateAudioStyleProposals() {
+    if (!audioAnalysis) {
+      setAudioStyleProposalError("先に音源解析を実行してください。");
+      return;
+    }
+
+    setIsGeneratingAudioStyles(true);
+    setAudioStyleProposalError(null);
+
+    try {
+      const data = await postJson<AudioStyleProposalOutput>("/api/generate-audio-styles", {
+        analysis: audioAnalysis,
+        sourceStyle: revisionForm.sourceStyle,
+        freeText: revisionForm.freeText
+      });
+      setAudioStyleProposals(data);
+    } catch (nextError) {
+      setAudioStyleProposalError(
+        nextError instanceof Error ? nextError.message : "AIスタイル案の生成に失敗しました。"
+      );
+    } finally {
+      setIsGeneratingAudioStyles(false);
+    }
+  }
+
+  function applyAudioStyleProposal(proposal: AudioStyleProposal) {
+    setRevisionForm((current) => ({
+      ...current,
+      sourceStyle: proposal.style
+    }));
+    setAudioStyleApplied(true);
+    setAppliedAudioStyleId(proposal.id);
   }
 
   function loadFromHistory(item: GenerationHistoryItem) {
@@ -1240,6 +1428,242 @@ export function SunoStudio() {
                     onChange={(event) => updateRevisionForm("freeText", event.target.value)}
                     placeholder="追加要望"
                   />
+                </div>
+
+                <div className="grid gap-3 rounded-lg border border-border bg-muted/25 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileAudio className="size-4 text-primary" />
+                      <h3 className="text-sm font-bold">音源解析</h3>
+                      <Badge tone="accent">{audioAnalysis ? analysisEngineLabel(audioAnalysis.engine) : "Python Local"}</Badge>
+                    </div>
+                    {audioAnalysis ? (
+                      <Badge tone={audioStyleApplied ? "primary" : "warning"}>
+                        {audioStyleApplied ? "Style反映済み" : "反映待ち"}
+                      </Badge>
+                    ) : null}
+                  </div>
+
+                  <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+                    <label className="flex min-h-12 cursor-pointer items-center gap-3 rounded-md border border-dashed border-border bg-panel-strong px-3 text-sm font-semibold text-muted-foreground transition hover:border-primary/50 hover:text-foreground">
+                      <Upload className="size-4 shrink-0 text-primary" />
+                      <span className="min-w-0 truncate">{audioFile ? audioFile.name : "音声ファイルを選択"}</span>
+                      <input
+                        className="sr-only"
+                        type="file"
+                        accept="audio/*,.wav,.mp3,.m4a,.aac,.flac,.ogg"
+                        onChange={selectAudioFile}
+                      />
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={analyzeSelectedAudio}
+                        disabled={isAnalyzingAudio || isAnalyzingAudioAdvanced || !audioFile}
+                      >
+                        {isAnalyzingAudio ? <Loader2 className="size-4 animate-spin" /> : <AudioWaveform className="size-4" />}
+                        音源を解析
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        onClick={analyzeSelectedAudioAdvanced}
+                        disabled={isAnalyzingAudio || isAnalyzingAudioAdvanced || !audioFile}
+                      >
+                        {isAnalyzingAudioAdvanced ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                        高精度解析
+                      </Button>
+                    </div>
+                  </div>
+
+                  {audioAnalysisError ? (
+                    <p className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm leading-6 text-danger">
+                      {audioAnalysisError}
+                    </p>
+                  ) : null}
+
+                  {audioAnalysisNotice ? (
+                    <p className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-sm leading-6 text-warning">
+                      {audioAnalysisNotice}
+                    </p>
+                  ) : null}
+
+                  {audioAnalysis ? (
+                    <div className="grid gap-3 border-t border-border/70 pt-3">
+                      <div className="flex flex-wrap gap-2">
+                        <Badge tone="primary">
+                          {audioAnalysis.bpm ? `${audioAnalysis.bpm} BPM` : "BPM不明"}
+                        </Badge>
+                        <Badge tone="primary">
+                          {audioAnalysis.key && audioAnalysis.mode
+                            ? `${audioAnalysis.key} ${audioAnalysis.mode}`
+                            : "キー不明"}
+                        </Badge>
+                        <Badge>尺 {formatSeconds(audioAnalysis.duration)}</Badge>
+                        <Badge>構成 {audioAnalysis.structure.length} blocks</Badge>
+                        <Badge>Tempo {confidencePercent(audioAnalysis.bpmConfidence)}</Badge>
+                        <Badge>Key {confidencePercent(audioAnalysis.keyConfidence)}</Badge>
+                      </div>
+
+                      <p className="text-sm leading-6 text-muted-foreground">{audioAnalysis.summary}</p>
+
+                      <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <h4 className="text-xs font-semibold text-primary">Suno再現スタイル案</h4>
+                          <div className="flex flex-wrap gap-2">
+                            <CopyButton value={audioAnalysis.sunoStyle} />
+                            <Button type="button" variant="secondary" size="sm" onClick={applyAudioStyleToRevision}>
+                              <CheckCircle2 className="size-4" />
+                              既存Styleへ反映
+                            </Button>
+                          </div>
+                        </div>
+                        <textarea
+                          className={cn(inputClassName, "min-h-28 resize-y font-mono text-xs leading-5")}
+                          readOnly
+                          value={audioAnalysis.sunoStyle}
+                        />
+                      </div>
+
+                      <div className="grid gap-3 rounded-md border border-border bg-panel-strong p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div>
+                            <h4 className="text-xs font-semibold text-primary">AIスタイル案</h4>
+                            {audioStyleProposals ? (
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">{audioStyleProposals.summary}</p>
+                            ) : null}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            onClick={generateAudioStyleProposals}
+                            disabled={isGeneratingAudioStyles}
+                          >
+                            {isGeneratingAudioStyles ? (
+                              <Loader2 className="size-4 animate-spin" />
+                            ) : (
+                              <Sparkles className="size-4" />
+                            )}
+                            3案を生成
+                          </Button>
+                        </div>
+
+                        {audioStyleProposalError ? (
+                          <p className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs leading-5 text-danger">
+                            {audioStyleProposalError}
+                          </p>
+                        ) : null}
+
+                        {audioStyleProposals ? (
+                          <div className="grid gap-3">
+                            {audioStyleProposals.proposals.map((proposal) => (
+                              <article
+                                key={proposal.id}
+                                className={cn(
+                                  "grid gap-3 rounded-md border bg-muted/25 p-3",
+                                  appliedAudioStyleId === proposal.id ? "border-primary/70" : "border-border"
+                                )}
+                              >
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div>
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <h5 className="text-sm font-bold">{proposal.name}</h5>
+                                      {appliedAudioStyleId === proposal.id ? <Badge tone="primary">反映済み</Badge> : null}
+                                    </div>
+                                    <p className="mt-1 text-xs leading-5 text-muted-foreground">{proposal.intent}</p>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    <CopyButton value={proposal.style} />
+                                    <Button type="button" variant="secondary" size="sm" onClick={() => applyAudioStyleProposal(proposal)}>
+                                      <CheckCircle2 className="size-4" />
+                                      既存Styleへ反映
+                                    </Button>
+                                  </div>
+                                </div>
+
+                                <textarea
+                                  className={cn(inputClassName, "min-h-24 resize-y font-mono text-xs leading-5")}
+                                  readOnly
+                                  value={proposal.style}
+                                />
+                                <div className="grid gap-2 text-xs leading-5 text-muted-foreground md:grid-cols-2">
+                                  <p>{proposal.rationale}</p>
+                                  <p>{proposal.bestUse}</p>
+                                </div>
+                                <div className="grid gap-2 rounded-md border border-border/70 bg-panel p-2">
+                                  <p className="text-xs font-semibold text-warning">Negative</p>
+                                  <p className="font-mono text-xs leading-5 text-muted-foreground">{proposal.negativeTags}</p>
+                                </div>
+                                {proposal.cautions.length ? (
+                                  <ul className="space-y-1 text-xs leading-5 text-muted-foreground">
+                                    {proposal.cautions.map((caution) => (
+                                      <li key={caution}>{caution}</li>
+                                    ))}
+                                  </ul>
+                                ) : null}
+                              </article>
+                            ))}
+                            {audioStyleProposals.warnings.length ? (
+                              <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+                                {audioStyleProposals.warnings.map((warning) => (
+                                  <p key={warning}>{warning}</p>
+                                ))}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                          <h4 className="text-xs font-semibold text-primary">構成推定</h4>
+                          <div className="grid gap-2 text-xs leading-5 text-muted-foreground">
+                            {audioAnalysis.structure.map((section, index) => (
+                              <div key={`${section.label}-${section.start}-${index}`} className="grid gap-1 border-t border-border/60 pt-2 first:border-t-0 first:pt-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-foreground">{section.label}</span>
+                                  <span>{confidencePercent(section.confidence)}</span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span>
+                                    {formatSeconds(section.start)} - {formatSeconds(section.end)}
+                                  </span>
+                                  <span>{section.energy > 0.68 ? "dense" : section.energy < 0.36 ? "soft" : "mid"}</span>
+                                </div>
+                                <span>{section.description}</span>
+                                <span>{section.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                          <h4 className="text-xs font-semibold text-primary">楽器候補</h4>
+                          <div className="grid gap-2 text-xs leading-5 text-muted-foreground">
+                            {audioAnalysis.instruments.map((instrument) => (
+                              <div key={instrument.label} className="grid gap-1 border-t border-border/60 pt-2 first:border-t-0 first:pt-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-foreground">{instrument.label}</span>
+                                  <span>{confidencePercent(instrument.confidence)}</span>
+                                </div>
+                                <span>{instrument.reason}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {audioAnalysis.warnings.length ? (
+                        <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs leading-5 text-warning">
+                          {audioAnalysis.warnings.map((warning) => (
+                            <p key={warning}>{warning}</p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">
