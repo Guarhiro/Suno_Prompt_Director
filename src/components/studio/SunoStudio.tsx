@@ -9,6 +9,7 @@ import {
   ChevronDown,
   CircleOff,
   Clock3,
+  FileText,
   History,
   KeyRound,
   ListMusic,
@@ -48,6 +49,7 @@ import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { SliderControl } from "@/components/ui/slider-control";
 import type { DirectionItem, DirectionProposal } from "@/lib/schemas/directionProposal";
 import type { FinalSunoOutput } from "@/lib/schemas/finalSunoOutput";
+import type { RevisedSunoOutput } from "@/lib/schemas/reviseSunoOutput";
 import type { SongInput } from "@/lib/schemas/songInput";
 import {
   addGenerationHistory,
@@ -124,12 +126,22 @@ const sampleProposal: DirectionProposal = {
 const tabs = [
   { id: "direction", label: "Direction" },
   { id: "final", label: "Final" },
+  { id: "revise", label: "Revise" },
   { id: "alternates", label: "Alternates" },
   { id: "history", label: "History" }
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
 type ArrayField = "moods" | "genres" | "instruments" | "structure" | "priorities" | "avoid";
+type RevisionMode = "new" | "cover";
+type RevisionForm = {
+  mode: RevisionMode;
+  optionIds: string[];
+  freeText: string;
+  sourceTitle: string;
+  sourceStyle: string;
+  sourceLyrics: string;
+};
 type AppSettings = {
   apiKey: string;
   hasApiKey: boolean;
@@ -143,6 +155,30 @@ type SettingsStatus = {
   tone: "success" | "error";
   message: string;
 } | null;
+
+const revisionOptions = [
+  { id: "scene_arrangement", label: "場面ごとの構成を変えたい" },
+  { id: "instrumentation", label: "楽器編成を変えたい" },
+  { id: "ensemble_size", label: "人数感を変えたい" },
+  { id: "key", label: "キーを変えたい" },
+  { id: "bpm", label: "BPMを変えたい" },
+  { id: "mood", label: "雰囲気を変えたい" },
+  { id: "add_vocal", label: "ボーカルを追加したい" },
+  { id: "reduce_vocal", label: "ボーカルを減らしたい" },
+  { id: "instrumental", label: "インストで作りたい" },
+  { id: "lyrics_only", label: "歌詞だけ直したい" },
+  { id: "style_only", label: "Styleだけ直したい" },
+  { id: "shorten", label: "Suno向けに短く整理したい" }
+] as const;
+
+const defaultRevisionForm: RevisionForm = {
+  mode: "new",
+  optionIds: [],
+  freeText: "",
+  sourceTitle: "",
+  sourceStyle: "",
+  sourceLyrics: ""
+};
 
 async function postJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
@@ -361,10 +397,13 @@ export function SunoStudio() {
   );
   const [answers, setAnswers] = React.useState<Record<string, string>>({});
   const [finalOutput, setFinalOutput] = React.useState<FinalSunoOutput | null>(null);
+  const [revisionForm, setRevisionForm] = React.useState<RevisionForm>(defaultRevisionForm);
+  const [revisionOutput, setRevisionOutput] = React.useState<RevisedSunoOutput | null>(null);
   const [history, setHistory] = React.useState<GenerationHistoryItem[]>([]);
   const [activeTab, setActiveTab] = React.useState<TabId>("direction");
   const [isProposing, setIsProposing] = React.useState(false);
   const [isGenerating, setIsGenerating] = React.useState(false);
+  const [isRevising, setIsRevising] = React.useState(false);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [settings, setSettings] = React.useState<AppSettings>({
     apiKey: "",
@@ -428,6 +467,10 @@ export function SunoStudio() {
     setInput((current) => ({ ...current, [key]: value }));
   }
 
+  function updateRevisionForm<K extends keyof RevisionForm>(key: K, value: RevisionForm[K]) {
+    setRevisionForm((current) => ({ ...current, [key]: value }));
+  }
+
   function toggleArrayValue(field: ArrayField, value: string) {
     setInput((current) => {
       const currentValues = current[field] ?? [];
@@ -459,6 +502,26 @@ export function SunoStudio() {
       instrumental: option === "インスト",
       vocalGender: option === "男性" ? "m" : option === "女性" ? "f" : undefined
     }));
+  }
+
+  function toggleRevisionOption(id: string) {
+    setRevisionForm((current) => ({
+      ...current,
+      optionIds: current.optionIds.includes(id)
+        ? current.optionIds.filter((item) => item !== id)
+        : [...current.optionIds, id]
+    }));
+  }
+
+  function loadFinalIntoRevision() {
+    if (!finalOutput) return;
+    setRevisionForm((current) => ({
+      ...current,
+      sourceTitle: finalOutput.sunoCopyBlocks.title,
+      sourceStyle: finalOutput.sunoCopyBlocks.style,
+      sourceLyrics: finalOutput.sunoCopyBlocks.lyrics
+    }));
+    setActiveTab("revise");
   }
 
   function applySongPreset(useCase: string) {
@@ -537,6 +600,12 @@ export function SunoStudio() {
         answers
       });
       setFinalOutput(data);
+      setRevisionForm((current) => ({
+        ...current,
+        sourceTitle: data.sunoCopyBlocks.title,
+        sourceStyle: data.sunoCopyBlocks.style,
+        sourceLyrics: data.sunoCopyBlocks.lyrics
+      }));
       setActiveTab("final");
 
       const item: GenerationHistoryItem = {
@@ -554,9 +623,39 @@ export function SunoStudio() {
     }
   }
 
+  async function reviseOutput() {
+    setIsRevising(true);
+    setError(null);
+
+    try {
+      const optionLabels = revisionOptions
+        .filter((option) => revisionForm.optionIds.includes(option.id))
+        .map((option) => option.label);
+      const data = await postJson<RevisedSunoOutput>("/api/revise", {
+        ...revisionForm,
+        optionLabels,
+        input,
+        selectedDirection,
+        finalOutput: finalOutput ?? undefined
+      });
+      setRevisionOutput(data);
+      setActiveTab("revise");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "修正案の生成に失敗しました。");
+    } finally {
+      setIsRevising(false);
+    }
+  }
+
   function loadFromHistory(item: GenerationHistoryItem) {
     setInput(item.input);
     setFinalOutput(item.output);
+    setRevisionForm((current) => ({
+      ...current,
+      sourceTitle: item.output.sunoCopyBlocks.title,
+      sourceStyle: item.output.sunoCopyBlocks.style,
+      sourceLyrics: item.output.sunoCopyBlocks.lyrics
+    }));
     setActiveTab("final");
     setError(null);
   }
@@ -680,6 +779,10 @@ export function SunoStudio() {
               <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("final")}>
                 <WandSparkles className="size-4" />
                 Final
+              </Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("revise")}>
+                <FileText className="size-4" />
+                Revise
               </Button>
             </nav>
             <div className="grid gap-2 rounded-md border border-border bg-muted/35 p-3">
@@ -1089,6 +1192,152 @@ export function SunoStudio() {
                         {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                         Final プロンプトを生成
                       </Button>
+                    </div>
+                  </div>
+                )}
+              </PanelBody>
+            ) : null}
+
+            {activeTab === "revise" ? (
+              <PanelBody className="grid gap-4">
+                <div className="grid gap-3 rounded-lg border border-border bg-muted/25 p-4">
+                  <div className="flex flex-wrap gap-2">
+                    <ChipButton
+                      active={revisionForm.mode === "new"}
+                      onClick={() => updateRevisionForm("mode", "new")}
+                    >
+                      新規で修正案を作る
+                    </ChipButton>
+                    <ChipButton
+                      active={revisionForm.mode === "cover"}
+                      onClick={() => updateRevisionForm("mode", "cover")}
+                    >
+                      Coverとして修正
+                    </ChipButton>
+                    {finalOutput ? (
+                      <Button type="button" variant="secondary" size="sm" onClick={loadFinalIntoRevision}>
+                        <FileText className="size-4" />
+                        Finalを読み込む
+                      </Button>
+                    ) : null}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 border-t border-border/70 pt-3">
+                    {revisionOptions.map((option) => (
+                      <ChipButton
+                        key={option.id}
+                        active={revisionForm.optionIds.includes(option.id)}
+                        onClick={() => toggleRevisionOption(option.id)}
+                      >
+                        {option.label}
+                      </ChipButton>
+                    ))}
+                  </div>
+
+                  <textarea
+                    className={cn(inputClassName, "min-h-28 resize-y leading-6")}
+                    value={revisionForm.freeText}
+                    onChange={(event) => updateRevisionForm("freeText", event.target.value)}
+                    placeholder="追加要望"
+                  />
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Field label="既存Style" icon={<SlidersHorizontal className="size-4 text-muted-foreground" />} className="border-b-0 py-0">
+                    <textarea
+                      className={cn(inputClassName, "min-h-40 resize-y font-mono text-xs leading-5")}
+                      value={revisionForm.sourceStyle}
+                      onChange={(event) => updateRevisionForm("sourceStyle", event.target.value)}
+                      placeholder="Style"
+                    />
+                  </Field>
+                  <Field label="既存Lyrics" icon={<BookOpen className="size-4 text-muted-foreground" />} className="border-b-0 py-0">
+                    <textarea
+                      className={cn(inputClassName, "min-h-40 resize-y font-mono text-xs leading-5")}
+                      value={revisionForm.sourceLyrics}
+                      onChange={(event) => updateRevisionForm("sourceLyrics", event.target.value)}
+                      placeholder="Lyrics"
+                    />
+                  </Field>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                  <Field label="既存タイトル" className="border-b-0 py-0">
+                    <input
+                      className={inputClassName}
+                      value={revisionForm.sourceTitle}
+                      onChange={(event) => updateRevisionForm("sourceTitle", event.target.value)}
+                      placeholder="タイトル"
+                    />
+                  </Field>
+                  <Button type="button" variant="primary" size="lg" onClick={reviseOutput} disabled={isRevising}>
+                    {isRevising ? <Loader2 className="size-5 animate-spin" /> : <WandSparkles className="size-5" />}
+                    修正案を生成
+                  </Button>
+                </div>
+
+                {revisionOutput ? (
+                  <div className="grid gap-4">
+                    <div className="grid gap-3 rounded-lg border border-primary/35 bg-primary/10 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                      <div>
+                        <p className="text-xs font-semibold text-primary">Revision</p>
+                        <h2 className="mt-1 text-2xl font-bold">{revisionOutput.revisedTitle}</h2>
+                        <p className="mt-2 text-sm leading-6 text-muted-foreground">{revisionOutput.summary}</p>
+                      </div>
+                      <CopyButton value={revisionOutput.copyBlocks.title} label="タイトルをコピー" />
+                    </div>
+
+                    <div className="grid gap-3">
+                      <OutputBlock title="Revised Style" value={revisionOutput.copyBlocks.style} rows={5} />
+                      <OutputBlock title="Revised Lyrics" value={revisionOutput.copyBlocks.lyrics} rows={10} />
+                      <OutputBlock title="Notes" value={revisionOutput.copyBlocks.notes} rows={5} />
+                    </div>
+
+                    <div className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4">
+                      <h3 className="text-sm font-bold">変更内容</h3>
+                      <div className="grid gap-4 text-sm leading-6 text-muted-foreground md:grid-cols-3">
+                        <div>
+                          <p className="mb-2 text-xs font-semibold text-primary">Style</p>
+                          <ul className="space-y-1">
+                            {revisionOutput.styleChanges.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="mb-2 text-xs font-semibold text-primary">Lyrics</p>
+                          <ul className="space-y-1">
+                            {revisionOutput.lyricChanges.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        <div>
+                          <p className="mb-2 text-xs font-semibold text-primary">Arrange</p>
+                          <ul className="space-y-1">
+                            {revisionOutput.arrangementNotes.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                      {revisionOutput.warnings.length ? (
+                        <div className="border-t border-border/80 pt-3">
+                          <p className="mb-2 text-xs font-semibold text-warning">注意点</p>
+                          <ul className="space-y-1 text-sm leading-6 text-muted-foreground">
+                            {revisionOutput.warnings.map((item) => (
+                              <li key={item}>{item}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid min-h-56 place-items-center rounded-lg border border-dashed border-border bg-muted/25 p-8 text-center">
+                    <div className="max-w-sm">
+                      <FileText className="mx-auto mb-3 size-9 text-primary" />
+                      <h2 className="text-lg font-bold">修正案を生成</h2>
                     </div>
                   </div>
                 )}
