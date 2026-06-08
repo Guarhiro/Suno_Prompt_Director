@@ -9,6 +9,7 @@ import {
   ChevronDown,
   CircleOff,
   Clock3,
+  Download,
   FileText,
   FileAudio,
   History,
@@ -50,11 +51,16 @@ import { Field, inputClassName } from "@/components/ui/field";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { SliderControl } from "@/components/ui/slider-control";
 import {
+  classifyAudioInputLocally,
+  normalizeAudioInputClassification
+} from "@/lib/audio/classifyAudioInput";
+import {
   analyzeAudioFile,
   analyzeAudioFileAdvancedOnServer,
   analyzeAudioFileOnServer,
   type AudioAnalysisResult
 } from "@/lib/audio/analyzeAudio";
+import type { AudioInputClassification } from "@/lib/schemas/audioInputClassification";
 import type { DirectionItem, DirectionProposal } from "@/lib/schemas/directionProposal";
 import type { AudioStyleProposalOutput, AudioStyleProposal } from "@/lib/schemas/audioStyleProposal";
 import type { FinalSunoOutput } from "@/lib/schemas/finalSunoOutput";
@@ -86,55 +92,10 @@ const defaultInput: SongInput = {
   advancedNotes: ""
 };
 
-const sampleProposal: DirectionProposal = {
-  summary: "夜のドライブ感を軸に、爽やかさと少しの切なさを両立する方向性です。",
-  recommendedDirections: [
-    {
-      id: "sample-nocturnal-drive",
-      name: "Nocturnal Drive",
-      description: "夜道に合う透明感のあるシンセポップ。柔らかい低音と女性ボーカルで、切なさを軽く残します。",
-      genreBlend: ["ドリームポップ", "シンセウェーブ", "女性ボーカル"],
-      bpmRange: "90-110 BPM",
-      keyMood: "切ない / 爽やか / 夜",
-      recommendedInstruments: ["シンセパッド", "エレクトリックピアノ", "ソフトベース"],
-      vocalDirection: "女性ボーカル",
-      structure: ["Intro", "Verse", "Chorus", "Bridge", "Outro"],
-      strengths: ["Sunoで扱いやすいジャンルの組み合わせ", "歌詞とムードの一貫性を作りやすい", "ドライブ用途に合うテンポ感"],
-      risks: ["シンセ要素を増やしすぎると既視感が出やすい", "切なさを強めすぎると爽やかさが弱くなる"]
-    },
-    {
-      id: "sample-city-lights",
-      name: "City Lights Memory",
-      description: "都会の夜と記憶をテーマにした、ノスタルジックで滑らかなサウンド。",
-      genreBlend: ["シティポップ", "シンセポップ", "女性ボーカル"],
-      bpmRange: "96-118 BPM",
-      keyMood: "都会的 / 懐かしい",
-      recommendedInstruments: ["エレクトリックピアノ", "クリーンギター", "ソフトベース"],
-      vocalDirection: "軽めの女性ボーカル",
-      structure: ["Verse", "Pre-Chorus", "Chorus", "Bridge", "Outro"],
-      strengths: ["歌メロを立てやすい", "J-pop寄りにも洋楽寄りにも調整しやすい"],
-      risks: ["City popに寄せすぎると古さが目立つ", "BPMが速すぎると夜の余韻が薄くなる"]
-    },
-    {
-      id: "sample-midnight-wave",
-      name: "Midnight Wave",
-      description: "リバーブ感のあるパッドとアルペジオで、広がりのある夜の空気を作る方向性。",
-      genreBlend: ["ドリームポップ", "シューゲイザー", "シンセウェーブ"],
-      bpmRange: "84-100 BPM",
-      keyMood: "幻想的 / 浮遊感",
-      recommendedInstruments: ["シンセパッド", "アルペジオシンセ", "リバーブギター"],
-      vocalDirection: "息多めのボーカル",
-      structure: ["Intro", "Verse", "Chorus", "Outro"],
-      strengths: ["雰囲気作りが強い", "短い言葉でも印象を残しやすい"],
-      risks: ["音像が曖昧になりやすい", "歌詞を詰めすぎると浮遊感が落ちる"]
-    }
-  ],
-  questions: []
-};
-
 const tabs = [
   { id: "direction", label: "Direction" },
   { id: "final", label: "Final" },
+  { id: "export", label: "Export" },
   { id: "revise", label: "Revise" },
   { id: "alternates", label: "Alternates" },
   { id: "history", label: "History" }
@@ -242,6 +203,203 @@ function confidencePercent(value: number) {
 function analysisEngineLabel(engine: AudioAnalysisResult["engine"]) {
   if (engine === "advanced-local") return "High Precision";
   return engine === "python-librosa" ? "Python / librosa" : "Browser basic";
+}
+
+function audioInputClassificationLabel(source: AudioInputClassification["source"]) {
+  return source === "ai" ? "API反映済み" : "ローカル反映済み";
+}
+
+function cleanValue(value: string | null | undefined) {
+  return value?.trim() ?? "";
+}
+
+function cleanValues(values: Array<string | null | undefined>) {
+  return values.map(cleanValue).filter(Boolean);
+}
+
+function displayList(values: string[]) {
+  return values.length ? values.join(", ") : "未選択";
+}
+
+function markdownList(values: string[]) {
+  return values.length ? values.map((value) => `- ${value}`).join("\n") : "- 未選択";
+}
+
+function buildAdvancedSettingsBlock(input: SongInput) {
+  return [
+    `Custom Mode: ${input.customMode ? "on" : "off"}`,
+    `Instrumental: ${input.instrumental ? "on" : "off"}`,
+    `Style Weight: ${input.styleWeight.toFixed(2)}`,
+    `Weirdness: ${input.weirdnessConstraint.toFixed(2)}`,
+    `Audio Weight: ${input.audioWeight.toFixed(2)}`,
+    `Vocal Gender: ${input.vocalGender ?? "auto"}`
+  ].join("\n");
+}
+
+function buildLocalStylePrompt(input: SongInput, selectedDirection: DirectionItem | undefined, answers: Record<string, string>) {
+  const answerValues = Object.values(answers).filter((value) => cleanValue(value));
+  const parts = cleanValues([
+    input.useCase,
+    ...input.genres,
+    `${input.bpmMin}-${input.bpmMax} BPM`,
+    input.instrumental ? "instrumental" : input.vocalType,
+    ...input.moods,
+    ...input.instruments,
+    input.structure.length ? `Structure: ${input.structure.join(" > ")}` : "",
+    ...input.priorities,
+    input.lyricLanguage ? `${input.lyricLanguage} lyrics` : "",
+    input.lyricLength ? `${input.lyricLength} lyrics` : "",
+    input.lyricTheme ? `Lyric theme: ${input.lyricTheme}` : "",
+    input.freeText,
+    input.customMode ? "Custom Mode" : "Simple Mode",
+    `Style Weight ${input.styleWeight.toFixed(2)}`,
+    `Weirdness ${input.weirdnessConstraint.toFixed(2)}`,
+    `Audio Weight ${input.audioWeight.toFixed(2)}`,
+    input.advancedNotes ? `Notes: ${input.advancedNotes}` : "",
+    selectedDirection ? `Direction: ${selectedDirection.name}` : "",
+    selectedDirection?.description,
+    ...(selectedDirection?.genreBlend ?? []),
+    selectedDirection?.bpmRange,
+    selectedDirection?.keyMood,
+    ...(selectedDirection?.recommendedInstruments ?? []),
+    selectedDirection?.vocalDirection,
+    selectedDirection?.structure.length ? `Direction structure: ${selectedDirection.structure.join(" > ")}` : "",
+    ...answerValues.map((answer) => `Answer: ${answer}`),
+    input.avoid.length ? `Avoid: ${input.avoid.join(", ")}` : ""
+  ]);
+
+  return parts.join(", ");
+}
+
+function buildAnswerMarkdown(proposal: DirectionProposal | null, answers: Record<string, string>) {
+  const rows = Object.entries(answers)
+    .filter(([, value]) => cleanValue(value))
+    .map(([id, value]) => {
+      const question = proposal?.questions.find((item) => item.id === id);
+      return `- ${question?.question ?? id}: ${value}`;
+    });
+
+  return rows.length ? rows.join("\n") : "- 未回答";
+}
+
+function buildDirectionMarkdown(selectedDirection: DirectionItem | undefined) {
+  if (!selectedDirection) {
+    return "- 未選択";
+  }
+
+  return [
+    `- Name: ${selectedDirection.name}`,
+    `- Description: ${selectedDirection.description}`,
+    `- Genre Blend: ${displayList(selectedDirection.genreBlend)}`,
+    `- BPM Range: ${selectedDirection.bpmRange}`,
+    `- Key Mood: ${selectedDirection.keyMood}`,
+    `- Recommended Instruments: ${displayList(selectedDirection.recommendedInstruments)}`,
+    `- Vocal Direction: ${selectedDirection.vocalDirection}`,
+    `- Structure: ${displayList(selectedDirection.structure)}`,
+    "",
+    "### Strengths",
+    markdownList(selectedDirection.strengths),
+    "",
+    "### Risks",
+    markdownList(selectedDirection.risks)
+  ].join("\n");
+}
+
+function buildLocalExport(input: SongInput, proposal: DirectionProposal | null, selectedDirection: DirectionItem | undefined, answers: Record<string, string>) {
+  const stylePrompt = buildLocalStylePrompt(input, selectedDirection, answers);
+  const negativeTags = displayList(input.avoid);
+  const advancedSettings = buildAdvancedSettingsBlock(input);
+  const selectedItemCount =
+    cleanValues([
+      input.useCase,
+      input.freeText,
+      input.vocalType,
+      input.lyricLanguage,
+      input.lyricTheme,
+      input.lyricLength,
+      input.advancedNotes,
+      selectedDirection?.name,
+      ...Object.values(answers),
+      ...input.moods,
+      ...input.genres,
+      ...input.instruments,
+      ...input.structure,
+      ...input.priorities,
+      ...input.avoid
+    ]).length + 4;
+
+  const markdown = [
+    "# Suno Style Export",
+    "",
+    "## Suno Style Prompt",
+    "```text",
+    stylePrompt,
+    "```",
+    "",
+    "## LLM Request",
+    "この内容を元に、Sunoで使える曲名、Style、Lyrics、Negative Tags、Advanced設定の候補を作ってください。下の選択項目は省略せず反映してください。",
+    "",
+    "## Selected Inputs",
+    `- Use Case: ${input.useCase || "未選択"}`,
+    `- Free Text: ${input.freeText || "未入力"}`,
+    `- BPM: ${input.bpmMin}-${input.bpmMax}`,
+    `- Vocal: ${input.vocalType || "未選択"}`,
+    `- Instrumental: ${input.instrumental ? "on" : "off"}`,
+    `- Custom Mode: ${input.customMode ? "on" : "off"}`,
+    `- Lyric Language: ${input.lyricLanguage || "未選択"}`,
+    `- Lyric Theme: ${input.lyricTheme || "未入力"}`,
+    `- Lyric Length: ${input.lyricLength || "未選択"}`,
+    `- Advanced Notes: ${input.advancedNotes || "未入力"}`,
+    "",
+    "### Moods",
+    markdownList(input.moods),
+    "",
+    "### Genres",
+    markdownList(input.genres),
+    "",
+    "### Instruments / Sounds",
+    markdownList(input.instruments),
+    "",
+    "### Structure",
+    markdownList(input.structure),
+    "",
+    "### Priorities",
+    markdownList(input.priorities),
+    "",
+    "### Avoid",
+    markdownList(input.avoid),
+    "",
+    "## Selected Direction",
+    buildDirectionMarkdown(selectedDirection),
+    "",
+    "## Additional Answers",
+    buildAnswerMarkdown(proposal, answers),
+    "",
+    "## Suno Copy Blocks",
+    "",
+    "### Style",
+    "```text",
+    stylePrompt,
+    "```",
+    "",
+    "### Negative Tags",
+    "```text",
+    negativeTags,
+    "```",
+    "",
+    "### Advanced",
+    "```text",
+    advancedSettings,
+    "```"
+  ].join("\n");
+
+  return {
+    advancedSettings,
+    markdown,
+    negativeTags,
+    selectedItemCount,
+    stylePrompt
+  };
 }
 
 function OutputBlock({
@@ -417,10 +575,8 @@ function DirectionCard({
 
 export function SunoStudio() {
   const [input, setInput] = React.useState<SongInput>(defaultInput);
-  const [proposal, setProposal] = React.useState<DirectionProposal | null>(sampleProposal);
-  const [selectedDirectionId, setSelectedDirectionId] = React.useState<string | null>(
-    sampleProposal.recommendedDirections[0]?.id ?? null
-  );
+  const [proposal, setProposal] = React.useState<DirectionProposal | null>(null);
+  const [selectedDirectionId, setSelectedDirectionId] = React.useState<string | null>(null);
   const [answers, setAnswers] = React.useState<Record<string, string>>({});
   const [finalOutput, setFinalOutput] = React.useState<FinalSunoOutput | null>(null);
   const [revisionForm, setRevisionForm] = React.useState<RevisionForm>(defaultRevisionForm);
@@ -436,6 +592,9 @@ export function SunoStudio() {
   const [isGeneratingAudioStyles, setIsGeneratingAudioStyles] = React.useState(false);
   const [audioStyleProposalError, setAudioStyleProposalError] = React.useState<string | null>(null);
   const [appliedAudioStyleId, setAppliedAudioStyleId] = React.useState<string | null>(null);
+  const [audioInputClassification, setAudioInputClassification] = React.useState<AudioInputClassification | null>(null);
+  const [audioInputClassificationError, setAudioInputClassificationError] = React.useState<string | null>(null);
+  const [isClassifyingAudioInput, setIsClassifyingAudioInput] = React.useState(false);
   const [history, setHistory] = React.useState<GenerationHistoryItem[]>([]);
   const [activeTab, setActiveTab] = React.useState<TabId>("direction");
   const [isProposing, setIsProposing] = React.useState(false);
@@ -499,6 +658,9 @@ export function SunoStudio() {
       ? openRouterModelOptions
       : [{ provider: "Current", value: settings.model, label: settings.model }, ...openRouterModelOptions];
   }, [settings.model]);
+  const localExport = React.useMemo(() => {
+    return buildLocalExport(input, proposal, selectedDirection, answers);
+  }, [answers, input, proposal, selectedDirection]);
 
   function updateInput<K extends keyof SongInput>(key: K, value: SongInput[K]) {
     setInput((current) => ({ ...current, [key]: value }));
@@ -694,6 +856,8 @@ export function SunoStudio() {
     setAudioStyleProposals(null);
     setAudioStyleProposalError(null);
     setAppliedAudioStyleId(null);
+    setAudioInputClassification(null);
+    setAudioInputClassificationError(null);
   }
 
   async function analyzeSelectedAudio() {
@@ -709,6 +873,8 @@ export function SunoStudio() {
     setAudioStyleProposals(null);
     setAudioStyleProposalError(null);
     setAppliedAudioStyleId(null);
+    setAudioInputClassification(null);
+    setAudioInputClassificationError(null);
 
     try {
       const result = await analyzeAudioFileOnServer(audioFile);
@@ -748,6 +914,8 @@ export function SunoStudio() {
     setAudioStyleProposals(null);
     setAudioStyleProposalError(null);
     setAppliedAudioStyleId(null);
+    setAudioInputClassification(null);
+    setAudioInputClassificationError(null);
 
     try {
       const result = await analyzeAudioFileAdvancedOnServer(audioFile);
@@ -835,6 +1003,64 @@ export function SunoStudio() {
     setAppliedAudioStyleId(proposal.id);
   }
 
+  function applyAudioInputClassification(classification: AudioInputClassification) {
+    const normalized = normalizeAudioInputClassification(classification);
+    const nextVocalGender = normalized.input.vocalGender === "auto" ? undefined : normalized.input.vocalGender;
+
+    setInput((current) => ({
+      ...current,
+      moods: [...normalized.input.moods],
+      genres: [...normalized.input.genres],
+      bpmMin: normalized.input.bpmMin,
+      bpmMax: normalized.input.bpmMax,
+      vocalType: normalized.input.vocalType,
+      vocalGender: nextVocalGender,
+      instrumental: normalized.input.instrumental,
+      instruments: [...normalized.input.instruments],
+      structure: [...normalized.input.structure],
+      priorities: [...normalized.input.priorities],
+      customMode: normalized.input.customMode,
+      styleWeight: normalized.input.styleWeight,
+      weirdnessConstraint: normalized.input.weirdnessConstraint,
+      audioWeight: normalized.input.audioWeight,
+      advancedNotes: normalized.input.advancedNotes
+    }));
+    setAudioInputClassification(normalized);
+    setAudioInputClassificationError(null);
+  }
+
+  function applyLocalAudioInputClassification() {
+    if (!audioAnalysis) {
+      setAudioInputClassificationError("先に音源解析を実行してください。");
+      return;
+    }
+
+    applyAudioInputClassification(classifyAudioInputLocally(audioAnalysis));
+  }
+
+  async function classifyAudioInputWithApi() {
+    if (!audioAnalysis) {
+      setAudioInputClassificationError("先に音源解析を実行してください。");
+      return;
+    }
+
+    setIsClassifyingAudioInput(true);
+    setAudioInputClassificationError(null);
+
+    try {
+      const data = await postJson<AudioInputClassification>("/api/classify-audio-input", {
+        analysis: audioAnalysis
+      });
+      applyAudioInputClassification(data);
+    } catch (nextError) {
+      setAudioInputClassificationError(
+        nextError instanceof Error ? nextError.message : "API高精度判定に失敗しました。"
+      );
+    } finally {
+      setIsClassifyingAudioInput(false);
+    }
+  }
+
   function loadFromHistory(item: GenerationHistoryItem) {
     setInput(item.input);
     setFinalOutput(item.output);
@@ -850,6 +1076,20 @@ export function SunoStudio() {
 
   function deleteHistory(id: string) {
     setHistory(deleteGenerationHistoryItem(id));
+  }
+
+  function downloadLocalMarkdown() {
+    const blob = new Blob([localExport.markdown], { type: "text/markdown;charset=utf-8" });
+    const url = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const date = new Date().toISOString().slice(0, 10);
+
+    anchor.href = url;
+    anchor.download = `suno-style-export-${date}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(url);
   }
 
   return (
@@ -967,6 +1207,10 @@ export function SunoStudio() {
               <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("final")}>
                 <WandSparkles className="size-4" />
                 Final
+              </Button>
+              <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("export")}>
+                <Download className="size-4" />
+                Export
               </Button>
               <Button type="button" variant="ghost" className="justify-start" onClick={() => setActiveTab("revise")}>
                 <FileText className="size-4" />
@@ -1386,6 +1630,81 @@ export function SunoStudio() {
               </PanelBody>
             ) : null}
 
+            {activeTab === "export" ? (
+              <PanelBody className="grid gap-4">
+                <div className="grid gap-3 rounded-lg border border-primary/35 bg-primary/10 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                  <div>
+                    <p className="text-xs font-semibold text-primary">Local Export</p>
+                    <h2 className="mt-1 text-2xl font-bold">APIなしで書き出し</h2>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge tone="primary">No OpenRouter</Badge>
+                      <Badge>{localExport.selectedItemCount} items</Badge>
+                      <Badge tone={selectedDirection ? "accent" : "warning"}>
+                        {selectedDirection ? "Direction selected" : "Input only"}
+                      </Badge>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <CopyButton value={localExport.markdown} label="Markdownをコピー" />
+                    <Button type="button" variant="primary" onClick={downloadLocalMarkdown}>
+                      <Download className="size-4" />
+                      Markdown保存
+                    </Button>
+                  </div>
+                </div>
+
+                <OutputBlock title="Suno Style Prompt" value={localExport.stylePrompt} rows={6} />
+                <OutputBlock title="Markdown for LLM" value={localExport.markdown} rows={16} />
+
+                <div className="grid gap-3">
+                  <h3 className="text-sm font-bold">含まれる選択項目</h3>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                      <p className="text-xs font-semibold text-primary">Genre / Mood</p>
+                      <p className="font-mono text-xs leading-5 text-muted-foreground">
+                        {displayList([...input.genres, ...input.moods])}
+                      </p>
+                    </div>
+                    <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                      <p className="text-xs font-semibold text-primary">Instrument / Structure</p>
+                      <p className="font-mono text-xs leading-5 text-muted-foreground">
+                        {displayList([...input.instruments, ...input.structure])}
+                      </p>
+                    </div>
+                    <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                      <p className="text-xs font-semibold text-primary">Vocal / Lyrics</p>
+                      <p className="font-mono text-xs leading-5 text-muted-foreground">
+                        {displayList([
+                          input.vocalType,
+                          input.instrumental ? "Instrumental" : "Lyrics",
+                          input.lyricLanguage,
+                          input.lyricLength,
+                          input.lyricTheme
+                        ].filter(Boolean))}
+                      </p>
+                    </div>
+                    <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
+                      <p className="text-xs font-semibold text-primary">Priority / Avoid</p>
+                      <p className="font-mono text-xs leading-5 text-muted-foreground">
+                        {displayList([...input.priorities, ...input.avoid])}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid gap-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-bold">Suno補助ブロック</h3>
+                    <Badge tone={input.avoid.length ? "warning" : "default"}>Negative</Badge>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <OutputBlock title="Negative Tags" value={localExport.negativeTags} rows={3} />
+                    <OutputBlock title="Advanced" value={localExport.advancedSettings} rows={6} />
+                  </div>
+                </div>
+              </PanelBody>
+            ) : null}
+
             {activeTab === "revise" ? (
               <PanelBody className="grid gap-4">
                 <div className="grid gap-3 rounded-lg border border-border bg-muted/25 p-4">
@@ -1507,6 +1826,62 @@ export function SunoStudio() {
                       </div>
 
                       <p className="text-sm leading-6 text-muted-foreground">{audioAnalysis.summary}</p>
+
+                      <div className="grid gap-3 rounded-md border border-border bg-panel-strong p-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <SlidersHorizontal className="size-4 text-primary" />
+                            <h4 className="text-xs font-semibold text-primary">Direction Board判定</h4>
+                            {audioInputClassification ? (
+                              <Badge tone={audioInputClassification.source === "ai" ? "primary" : "accent"}>
+                                {audioInputClassificationLabel(audioInputClassification.source)}
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" variant="secondary" size="sm" onClick={applyLocalAudioInputClassification}>
+                              <CheckCircle2 className="size-4" />
+                              ローカル判定で置き換え
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              size="sm"
+                              onClick={classifyAudioInputWithApi}
+                              disabled={isClassifyingAudioInput}
+                            >
+                              {isClassifyingAudioInput ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Sparkles className="size-4" />
+                              )}
+                              API高精度で置き換え
+                            </Button>
+                          </div>
+                        </div>
+
+                        {audioInputClassification ? (
+                          <div className="grid gap-2">
+                            <p className="text-xs leading-5 text-muted-foreground">{audioInputClassification.summary}</p>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge>{audioInputClassification.input.bpmMin}-{audioInputClassification.input.bpmMax} BPM</Badge>
+                              {audioInputClassification.input.genres.slice(0, 3).map((genre) => (
+                                <Badge key={genre}>{genre}</Badge>
+                              ))}
+                              {audioInputClassification.input.moods.slice(0, 3).map((mood) => (
+                                <Badge key={mood}>{mood}</Badge>
+                              ))}
+                              <Badge tone="accent">{confidencePercent(audioInputClassification.confidence)}</Badge>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {audioInputClassificationError ? (
+                          <p className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs leading-5 text-danger">
+                            {audioInputClassificationError}
+                          </p>
+                        ) : null}
+                      </div>
 
                       <div className="grid gap-2 rounded-md border border-border bg-panel-strong p-3">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
