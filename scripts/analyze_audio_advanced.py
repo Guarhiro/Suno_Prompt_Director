@@ -544,9 +544,7 @@ def python_path_candidates(paths: list[str], include_current: bool) -> list[str]
         os.environ.get("AUDIO_ADVANCED_PYTHON", ""),
         os.environ.get("ALLIN1_PYTHON", ""),
         os.environ.get("DEMUCS_PYTHON", ""),
-        str(Path.home() / "Documents" / "music separater" / ".allin1-venv" / "bin" / "python"),
         str(Path.cwd() / ".venv" / "bin" / "python"),
-        str(Path.home() / "Documents" / "music separater" / ".venv" / "bin" / "python"),
     ]
     if include_current:
         candidates.append(sys.executable)
@@ -563,9 +561,6 @@ def build_subprocess_env(ffmpeg_path: str | None) -> dict[str, str]:
     path_prefixes = []
     if ffmpeg_path:
         path_prefixes.append(str(Path(ffmpeg_path).parent))
-    audio_stem_ffmpeg = Path.home() / "Documents" / "music separater" / ".venv" / "bin" / "ffmpeg"
-    if audio_stem_ffmpeg.is_file():
-        path_prefixes.append(str(audio_stem_ffmpeg.parent))
     if path_prefixes:
         env["PATH"] = os.pathsep.join(path_prefixes + [env.get("PATH", "")])
     expat_lib = Path("/opt/homebrew/opt/expat/lib")

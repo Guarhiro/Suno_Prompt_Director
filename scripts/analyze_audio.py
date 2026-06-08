@@ -120,16 +120,7 @@ def find_ffmpeg(explicit_path: str) -> str | None:
     candidates = [
         explicit_path,
         shutil.which("ffmpeg") or "",
-        str(
-            Path.home()
-            / "Documents"
-            / "Codex"
-            / "creative-file-studio-push"
-            / "vendor"
-            / "backgroundremover-venv"
-            / "bin"
-            / "ffmpeg"
-        ),
+        str(Path.cwd() / ".venv" / "bin" / "ffmpeg"),
         "/opt/homebrew/bin/ffmpeg",
         "/usr/local/bin/ffmpeg",
         "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",

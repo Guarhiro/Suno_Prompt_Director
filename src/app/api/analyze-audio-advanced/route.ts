@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { access, mkdir, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
@@ -39,17 +39,7 @@ export async function POST(request: Request) {
 
     const pythonPath = await resolvePythonPath();
     const ffmpegPath = await resolveOptionalExecutable(process.env.FFMPEG_PATH, [
-      join(homedir(), "Documents", "music separater", ".venv", "bin", "ffmpeg"),
-      join(
-        homedir(),
-        "Documents",
-        "Codex",
-        "creative-file-studio-push",
-        "vendor",
-        "backgroundremover-venv",
-        "bin",
-        "ffmpeg"
-      ),
+      join(process.cwd(), ".venv", "bin", "ffmpeg"),
       "/opt/homebrew/bin/ffmpeg",
       "/usr/local/bin/ffmpeg",
       "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
@@ -58,14 +48,11 @@ export async function POST(request: Request) {
     const allin1PythonCandidates = await resolveExecutableCandidates([
       process.env.ALLIN1_PYTHON,
       process.env.AUDIO_ADVANCED_PYTHON,
-      join(homedir(), "Documents", "music separater", ".allin1-venv", "bin", "python"),
-      join(process.cwd(), ".venv", "bin", "python"),
-      join(homedir(), "Documents", "music separater", ".venv", "bin", "python")
+      join(process.cwd(), ".venv", "bin", "python")
     ]);
     const demucsPythonCandidates = await resolveExecutableCandidates([
       process.env.DEMUCS_PYTHON,
       process.env.AUDIO_ADVANCED_PYTHON,
-      join(homedir(), "Documents", "music separater", ".venv", "bin", "python"),
       join(process.cwd(), ".venv", "bin", "python")
     ]);
     const scriptPath = join(process.cwd(), "scripts", "analyze_audio_advanced.py");

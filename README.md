@@ -54,21 +54,18 @@ npm run audio:setup
 ```
 
 `ffmpeg` がPATHにない場合は、`.env.local` に `FFMPEG_PATH` を設定してください。
-Creative File Studio の `vendor/backgroundremover-venv/bin/ffmpeg` がある場合は自動検出します。
+プロジェクト直下の `.venv/bin/ffmpeg` とHomebrewの標準的なインストール先は自動検出します。
 
 Reviseタブの `高精度解析` は、利用できる場合に all-in-one と Demucs を追加で使います。
 all-in-one は構成推定を補強し、Demucs は `drums / bass / vocals / other` などのstem比率で楽器推定を補強します。
 解析用のstemやスペクトログラム等の中間ファイルは処理後に削除します。PyTorch/Demucs/all-in-oneのモデルキャッシュは再ダウンロードを避けるため削除しません。
 
-Audio Stem Studio の Demucs 環境がある場合は、次のPythonを自動検出します。
-
-```text
-/Users/guarhiro/Documents/music separater/.venv/bin/python
-```
-
-all-in-oneを別環境に入れている場合は、必要に応じて `.env.local` に設定できます。
+高精度解析のPython候補は、`.env.local` の設定とプロジェクト直下の `.venv/bin/python` です。
+all-in-oneやDemucsを別のPython環境に入れている場合は、必要に応じて `.env.local` に設定できます。
+両方を同じ環境に入れている場合は、`AUDIO_ADVANCED_PYTHON` だけでも指定できます。
 
 ```env
+AUDIO_ADVANCED_PYTHON=/path/to/python-with-audio-tools
 ALLIN1_PYTHON=/path/to/python-with-allin1
 DEMUCS_PYTHON=/path/to/python-with-demucs
 AUDIO_ADVANCED_ALLIN1_MODEL=harmonix-fold0
