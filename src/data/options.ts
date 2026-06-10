@@ -604,6 +604,7 @@ export const instrumentOptionGroups: OptionGroup[] = [
       "オルガン",
       "ハモンドオルガン",
       "パイプオルガン",
+      "ポルタティーフ・オルガン",
       "チェンバロ",
       "クラビネット",
       "メロトロン",
@@ -658,6 +659,7 @@ export const instrumentOptionGroups: OptionGroup[] = [
       "カホン",
       "ティンパニ",
       "大太鼓",
+      "サーミの太鼓",
       "生パーカッション",
       "ブレイクビーツ"
     ]
@@ -675,6 +677,14 @@ export const instrumentOptionGroups: OptionGroup[] = [
       "トレモロストリングス",
       "ストリングススタッカート",
       "ハープ",
+      "ニッケルハルパ",
+      "ハーディ・ガーディ",
+      "カンテレ",
+      "グースリ",
+      "ヨウヒッコ",
+      "タルハルパ",
+      "リラ",
+      "ランゲレイク",
       "シネマティックストリングス"
     ]
   },
@@ -695,6 +705,10 @@ export const instrumentOptionGroups: OptionGroup[] = [
       "オーケストラブラス",
       "ブラスセクション",
       "リコーダー",
+      "骨笛",
+      "角笛",
+      "ルール",
+      "セリエフロイテ",
       "ハーモニカ"
     ]
   },
@@ -735,6 +749,7 @@ export const instrumentOptionGroups: OptionGroup[] = [
       "ウード",
       "ダルブッカ",
       "バグパイプ",
+      "口琴",
       "バンジョー",
       "フィドル",
       "カリンバ",
